@@ -12,5 +12,7 @@ The private-use glyphs in `omarchy.ttf` are:
 - `U+E907` — Ollama, from <https://simpleicons.org/icons/ollama.svg>
 - `U+E908` — T3 Code, traced from the app icon in <https://aur.archlinux.org/cgit/aur.git/plain/t3code-icon.png?h=t3code-bin>, since upstream publishes no monochrome SVG
 
+- `U+E90A` — Hermes, Font Awesome's staff-snake (CC BY 4.0) from <https://fontawesome.com/icons/staff-snake>, the mark Hermes serves as its favicon: their app icon is a portrait that reads as a smudge at menu size
+
 The agent marks are monochrome so the menu can render them using the active
 theme's foreground and selection colors.
