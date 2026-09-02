@@ -34,9 +34,7 @@ first call.
 
 Only one full bar option is active at a time. The built-in `omarchy.bar` is
 used when `bar.id` is omitted or when a selected third-party bar cannot load.
-Panels, overlays, and menus are loaded when summoned. Plugins can set
-`keepLoaded: true` to survive between summons. First-party services are
-loaded at startup.
+Panels, overlays, and menus are loaded when summoned. Plugins can set the top-level manifest key `keepLoaded: true` to survive between summons, and to keep a service mounted across plugin hot-reload (so `omarchy.lock` is not destroyed while Hyprland still holds the session lock). First-party services are loaded at startup.
 
 Full schema: [`shell/services/PluginRegistry.qml`](../shell/services/PluginRegistry.qml).
 
