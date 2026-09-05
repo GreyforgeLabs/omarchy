@@ -1,0 +1,199 @@
+#!/bin/bash
+
+# omarchy:summary=Sync the generated Omarchy theme to Hermes as a skin
+# omarchy:args=[--activate] [--wait]
+# omarchy:hidden=true
+
+# Hermes has one theme unit for all of its surfaces, the skin: a YAML file in
+# ~/.hermes/skins/ that the desktop app, the TUI and the CLI each turn into
+# their own palette. The active one is named by display.skin in Hermes' config,
+# and the gateway watches that file's mtime, so a rewrite of the active skin
+# repaints every connected surface within a second -- no Omarchy code in
+# Hermes, and nothing here that Hermes did not already offer any other system.
+#
+# Every run publishes the skin file, and for the desktop app Omarchy installed
+# names it in the config through Hermes' own config writer if Hermes is still
+# on its default skin, so a theme switch also picks up an install whose
+# hand-over was missed. --activate is the deliberate form, for the installer
+# and the migration: it renders a skin the current theme does not have yet and
+# says why nothing happened when it cannot finish. --wait holds the whole thing
+# until the desktop app has finished building the runtime its first launch
+# provisions.
+
+set -euo pipefail
+
+HERMES_SOURCE_PATH="$HOME/.local/state/omarchy/current/theme/hermes.yaml"
+HERMES_THEME_NAME_PATH="$HOME/.local/state/omarchy/current/theme.name"
+HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+HERMES_CONFIG_PATH="$HERMES_HOME/config.yaml"
+# The filename is the skin name Hermes shows and display.skin refers to, and it
+# stays put while the colors change underneath on every theme switch.
+HERMES_SKIN_NAME="omarchy"
+# The app writes this when the runtime it provisions has landed; the CLI
+# installer's readiness probe passes only once it has.
+HERMES_BOOTSTRAP_MARKER="$HERMES_HOME/hermes-agent/.hermes-bootstrap-complete"
+HERMES_ACTIVATE=0
+HERMES_WAIT=0
+HERMES_WAIT_LIMIT=$((30 * 60))
+
+usage() {
+  echo "Usage: omarchy-theme-set-hermes [--activate] [--wait]"
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    --activate)
+      HERMES_ACTIVATE=1
+      ;;
+    --wait)
+      HERMES_ACTIVATE=1
+      HERMES_WAIT=1
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+# Only the deliberate form explains itself: the theme switch runs this beside
+# a dozen other hooks, where a note about Hermes on every switch is noise.
+note() {
+  if (( HERMES_ACTIVATE == 1 )); then
+    echo "$*" >&2
+  fi
+}
+
+# The skin is generated with the rest of the theme, so a theme applied before
+# the template existed has none yet. Asked to activate, re-stage the current
+# theme to render it; a theme switch simply has nothing to publish.
+if [[ ! -f $HERMES_SOURCE_PATH ]]; then
+  (( HERMES_ACTIVATE == 1 )) || exit 0
+
+  if [[ ! -s $HERMES_THEME_NAME_PATH ]]; then
+    echo "Hermes skin source missing: $HERMES_SOURCE_PATH" >&2
+    echo "Select an Omarchy theme first." >&2
+    exit 1
+  fi
+
+  omarchy-theme-refresh
+
+  if [[ ! -f $HERMES_SOURCE_PATH ]]; then
+    echo "Hermes skin source missing after refreshing the theme: $HERMES_SOURCE_PATH" >&2
+    exit 1
+  fi
+fi
+
+# The desktop app builds its runtime on first launch, which takes minutes and
+# may be abandoned. Poll for the marker rather than the readiness probe, which
+# starts Hermes to answer, and give up quietly on a launch that never came.
+if (( HERMES_WAIT == 1 )); then
+  waited=0
+  until [[ -f $HERMES_BOOTSTRAP_MARKER && -f $HERMES_CONFIG_PATH ]]; do
+    if (( waited >= HERMES_WAIT_LIMIT )); then
+      echo "Hermes did not finish setting up within $((HERMES_WAIT_LIMIT / 60)) minutes; run omarchy-theme-set-hermes --activate once it has." >&2
+      exit 0
+    fi
+
+    sleep 10
+    waited=$((waited + 10))
+  done
+fi
+
+# Only follow a Hermes that has been set up. Its config is what Hermes writes
+# when it has; ~/.hermes itself proves nothing, because provisioning creates it
+# on every machine to hold the Omarchy skill.
+if [[ ! -f $HERMES_CONFIG_PATH ]]; then
+  note "Hermes is not set up yet; launch it once, then run omarchy-theme-set-hermes --activate."
+  exit 0
+fi
+
+# Hermes parses the skin as YAML and hands the strings to every surface, so the
+# generated file is held to the shape the template promises before it is
+# published: the name Hermes loads it by, a plain description, and colors that
+# are all #rrggbb. A theme missing a palette key leaves its placeholder
+# unresolved, and a theme cloned from a git repo may ship its own hermes.yaml;
+# neither gets to write anything else into a file another program reads. The
+# previous skin stays in place instead.
+skin_is_well_formed() {
+  local skin="$1"
+
+  grep -qx "name: $HERMES_SKIN_NAME" "$skin" &&
+    grep -qx 'colors:' "$skin" &&
+    ! grep -qvE "^(#.*|[[:space:]]*|name: $HERMES_SKIN_NAME|description: [A-Za-z0-9 ,.()-]*|colors:|  [a-z_]+: \"#[0-9a-fA-F]{6}\")$" "$skin"
+}
+
+if ! skin_is_well_formed "$HERMES_SOURCE_PATH"; then
+  echo "Skipping Hermes skin: $(basename "$HERMES_SOURCE_PATH") is not a plain color palette." >&2
+  exit 0
+fi
+
+# The gateway watches the skin file's mtime and reads it whole on change, so
+# the write has to be atomic: a half-written file would read as no skin at all.
+publish_skin() {
+  local skins_dir="$1"
+  local tmp
+
+  mkdir -p "$skins_dir"
+  tmp=$(mktemp "$skins_dir/$HERMES_SKIN_NAME.yaml.XXXXXX")
+  cp "$HERMES_SOURCE_PATH" "$tmp"
+  mv "$tmp" "$skins_dir/$HERMES_SKIN_NAME.yaml"
+}
+
+publish_skin "$HERMES_HOME/skins"
+
+# A Hermes profile is a home of its own, with its own skins and config, and the
+# gateway watches whichever profile is active. Existing profiles get the skin
+# too; none are created here.
+for profile in "$HERMES_HOME"/profiles/*/; do
+  [[ -d $profile ]] || continue
+  publish_skin "${profile%/}/skins"
+done
+
+# A theme switch finishes the hand-over only for the app Omarchy installed
+# under Install > AI; a Hermes set up some other way keeps whatever skin it
+# has unless --activate asks for it by name. Hermes writes the active skin
+# under display: at that indent, and once it names ours a theme switch is done
+# here without starting Hermes; anything else is for Hermes itself to answer
+# below, so the grep is only ever a shortcut.
+if (( HERMES_ACTIVATE == 0 )); then
+  omarchy-pkg-present hermes-desktop || exit 0
+  grep -qx "  skin: $HERMES_SKIN_NAME" "$HERMES_CONFIG_PATH" && exit 0
+fi
+
+# Naming the skin in the config is Hermes' own job: `hermes config set` is what
+# `hermes skin use` runs, it writes the active profile's config, and it touches
+# the skin file so a running gateway broadcasts the change and every surface
+# repaints at once. Asked through the installer's readiness probe rather than by
+# running whatever `hermes` is on PATH, because Omarchy's cold stub installs
+# Hermes when run, and that takes minutes.
+if ! omarchy-install-hermes-cli --check 2>/dev/null; then
+  note "Hermes is not ready, so the Omarchy skin is published but not active."
+  note "Once Hermes runs, activate it with: hermes config set display.skin $HERMES_SKIN_NAME"
+  exit 0
+fi
+
+# A skin the user picked in Hermes stays theirs. Only Hermes' own default is
+# replaced, so a reinstall, a migration or a theme switch never undoes a choice.
+current_skin=$(hermes config get display.skin 2>/dev/null || true)
+if [[ -n $current_skin && $current_skin != "default" && $current_skin != "$HERMES_SKIN_NAME" ]]; then
+  note "Hermes is set to the '$current_skin' skin; leaving it. Switch with: hermes config set display.skin $HERMES_SKIN_NAME"
+  exit 0
+fi
+
+hermes config set display.skin "$HERMES_SKIN_NAME" >/dev/null
+note "Hermes is on the Omarchy skin."
+
+# The desktop app adopts a skin from a change broadcast, not from the config it
+# finds at connect time, and the gateway seeds its change watcher when it starts.
+# A first launch brings the gateway up moments after the marker, so a config
+# written in that gap goes unannounced; republishing once the gateway is surely
+# up moves the file's mtime again, and that broadcast the desktop does apply.
+if (( HERMES_WAIT == 1 )); then
+  sleep 60
+  publish_skin "$HERMES_HOME/skins"
+fi

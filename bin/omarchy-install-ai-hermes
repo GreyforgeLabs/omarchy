@@ -21,6 +21,17 @@ omarchy-install-hermes-cli || true
 echo "Opening Hermes Desktop..."
 setsid uwsm-app -- /usr/bin/hermes-desktop >/dev/null 2>&1 &
 
+# The app builds its runtime on first launch, which takes minutes, and only a
+# running Hermes can be told which skin to show. So the theme is handed over
+# after the launch above, by a helper that waits for that runtime and then
+# names the Omarchy skin through Hermes itself; the running app repaints. Only
+# Hermes' own default is replaced, so a skin chosen in Hermes is never undone.
+# It runs as its own unit, so this terminal closing cannot take it along and
+# what it did is in the journal: journalctl --user -u omarchy-hermes-theme
+echo "Matching Hermes to the current theme once it is set up..."
+systemctl --user stop omarchy-hermes-theme.service 2>/dev/null || true
+systemd-run --user --quiet --collect --unit=omarchy-hermes-theme omarchy-theme-set-hermes --wait
+
 echo ""
 echo "Hermes Desktop has been installed."
 echo "Its first launch installs the Hermes runtime, which takes a few minutes."
