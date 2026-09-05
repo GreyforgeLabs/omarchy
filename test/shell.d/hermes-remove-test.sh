@@ -184,18 +184,27 @@ OMARCHY_TEST_GUM_STATUS=0 remove_tty || fail "remove succeeds when the data goes
   fail "a yes deletes ~/.hermes and ~/.config/Hermes"
 pass "removal deletes the user's data only on an explicit yes"
 
-# Without the bootstrap marker ~/.hermes is an install the app never owned, so
-# it must not even be offered for deletion -- not to a terminal, not to a user
-# who would say yes.
+# Without the bootstrap marker the runtime is not the app's to take unasked,
+# but the data question is still the user's to answer: declining keeps the
+# whole tree -- runtime included -- untouched.
+seed_install
+rm -f "$test_home/.hermes/hermes-agent/.hermes-bootstrap-complete"
+remove_tty || fail "remove succeeds when the app never installed Hermes"
+tr '\0' '\n' <"$test_tmp/gum-log" | grep -qx 'confirm' ||
+  fail "removal still asks about the data without the bootstrap marker"
+[[ -d $test_home/.hermes/hermes-agent && -d $test_home/.config/Hermes ]] ||
+  fail "declining keeps a Hermes the app never installed"
+pass "removal asks without the marker and declining keeps everything"
+
+# The prompt names ~/.hermes itself, so a yes takes the whole tree there too,
+# unowned runtime and all -- that is what was asked and answered.
 seed_install
 rm -f "$test_home/.hermes/hermes-agent/.hermes-bootstrap-complete"
 OMARCHY_TEST_GUM_STATUS=0 remove_tty ||
-  fail "remove succeeds when the app never installed Hermes"
-[[ ! -s $test_tmp/gum-log ]] ||
-  fail "a Hermes the app never installed is not offered for deletion"
-[[ -d $test_home/.hermes/hermes-agent && -d $test_home/.config/Hermes ]] ||
-  fail "a Hermes the app never installed survives a would-be yes"
-pass "removal never offers a Hermes the app did not install"
+  fail "remove succeeds when the data goes too without the marker"
+[[ ! -e $test_home/.hermes && ! -e $test_home/.config/Hermes ]] ||
+  fail "a yes takes ~/.hermes whole when the marker never appeared"
+pass "removal honors a yes on the named paths without the marker"
 
 # A CLI teardown that fails must not stop the runtime handling, and must not be
 # papered over either: the data work still happens, and the failure reaches the
