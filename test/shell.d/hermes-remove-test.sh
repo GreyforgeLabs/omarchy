@@ -34,6 +34,11 @@ cat >"$mock_bin/gum" <<'SH'
 printf '%s\0' "$@" >>"$OMARCHY_TEST_GUM_LOG"
 exit "${OMARCHY_TEST_GUM_STATUS:-1}"
 SH
+cat >"$mock_bin/systemctl" <<'SH'
+#!/bin/bash
+echo "systemctl $*" >>"$OMARCHY_TEST_SYSTEMCTL_LOG"
+SH
+
 chmod +x "$mock_bin"/*
 
 seed_install() {
@@ -58,9 +63,11 @@ seed_install() {
 remove() {
   : >"$test_tmp/installer-log"
   : >"$test_tmp/gum-log"
+  : >"$test_tmp/systemctl-log"
   OMARCHY_TEST_DROP_LOG="$test_tmp/drop-log" \
     OMARCHY_TEST_INSTALLER_LOG="$test_tmp/installer-log" \
     OMARCHY_TEST_INSTALLER_STATUS="${OMARCHY_TEST_INSTALLER_STATUS:-0}" \
+    OMARCHY_TEST_SYSTEMCTL_LOG="$test_tmp/systemctl-log" \
     OMARCHY_TEST_GUM_LOG="$test_tmp/gum-log" \
     HOME="$test_home" PATH="$mock_bin:$PATH" \
     bash "$ROOT/bin/omarchy-remove-ai-hermes" </dev/null >/dev/null 2>&1
@@ -71,8 +78,10 @@ remove() {
 remove_tty() {
   : >"$test_tmp/installer-log"
   : >"$test_tmp/gum-log"
+  : >"$test_tmp/systemctl-log"
   OMARCHY_TEST_DROP_LOG="$test_tmp/drop-log" \
     OMARCHY_TEST_INSTALLER_LOG="$test_tmp/installer-log" \
+    OMARCHY_TEST_SYSTEMCTL_LOG="$test_tmp/systemctl-log" \
     OMARCHY_TEST_GUM_LOG="$test_tmp/gum-log" \
     OMARCHY_TEST_GUM_STATUS="${OMARCHY_TEST_GUM_STATUS:-1}" \
     HOME="$test_home" PATH="$mock_bin:$PATH" \
@@ -88,6 +97,10 @@ remove || fail "remove succeeds"
 [[ ! -d $test_home/.hermes/bin ]] || fail "the uv the app installed is removed"
 [[ ! -d $test_home/.hermes/node ]] || fail "the node the app installed is removed"
 pass "removal takes the whole runtime the app installed"
+
+grep -Fxq 'systemctl --user stop omarchy-hermes-theme.service' "$test_tmp/systemctl-log" ||
+  fail "the unit the installer left waiting to hand over the theme is stopped" "$(cat "$test_tmp/systemctl-log")"
+pass "removal stops the installer's theme hand-over"
 
 [[ -d $test_home/.config/Hermes ]] ||
   fail "gateway connections, tokens and settings survive removal"
