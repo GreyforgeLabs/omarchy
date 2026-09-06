@@ -1,23 +1,34 @@
 #!/bin/bash
 
 # omarchy:summary=Overwrite the package configuration for /etc/pacman with the Omarchy default of using its dedicated mirrors and repositories, then update all packages.
+# omarchy:args=[stable|rc|edge]
 # omarchy:requires-sudo=true
 
-sudo cp -f /etc/pacman.conf /etc/pacman.conf.bak
-sudo cp -f /etc/pacman.d/mirrorlist /etc/pacman.d/mirrorlist.bak
+set -e
 
 channel="${1:-stable}"
+pacman_config=${OMARCHY_PACMAN_CONFIG:-/etc/pacman.conf}
+mirrorlist=${OMARCHY_MIRRORLIST:-/etc/pacman.d/mirrorlist}
 
-if [[ $channel != "stable" && $channel != "rc" && $channel != "edge" ]]; then
-  echo "Error: Invalid channel '$channel'. Must be one of: stable, rc, edge"
+# Do not replace a working ARM repository setup with an unpublished channel.
+if [[ $(uname -m) == "aarch64" && ( $channel == "stable" || $channel == "rc" ) ]]; then
+  echo "Omarchy $channel packages are not published for aarch64 yet. No repository configuration changed." >&2
+  echo "Use 'omarchy refresh pacman edge' only if you intend to use edge packages and upgrade the system." >&2
   exit 1
 fi
+
+staged=$(mktemp -d)
+trap 'rm -rf -- "$staged"' EXIT
+source "$OMARCHY_PATH/install/helpers/pacman.sh"
+pacman_write_repository_config "$channel" "$staged/pacman.conf" "$staged/mirrorlist"
 
 echo "Setting channel to $channel"
 echo
 
-sudo cp -f "$OMARCHY_PATH/default/pacman/pacman-$channel.conf" /etc/pacman.conf
-sudo cp -f "$OMARCHY_PATH/default/pacman/mirrorlist-$channel" /etc/pacman.d/mirrorlist
+sudo cp -f "$pacman_config" "$pacman_config.bak"
+sudo cp -f "$mirrorlist" "$mirrorlist.bak"
+sudo cp -f "$staged/pacman.conf" "$pacman_config"
+sudo cp -f "$staged/mirrorlist" "$mirrorlist"
 
 # Allow user customization of /etc/pacman.conf before the upgrade runs
 omarchy-hook pre-refresh-pacman
