@@ -529,6 +529,10 @@ cat >"$stub_bin/hook-supergfxctl" <<'SH'
 case "$1" in
   -m)
     printf '%s\n' "$*" >>"$HOOK_CALLS"
+    if [[ ${HOOK_BLOCK_MODE:-} == "$2" ]]; then
+      trap '' TERM
+      /usr/bin/sleep 30
+    fi
     current=$(sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$HOOK_CONFIG")
     if [[ $current != "$2" ]]; then
       printf '%s %s\n' "$2" "${HOOK_CONFIRM_AFTER:-1}" >"$HOOK_PENDING"
@@ -626,6 +630,22 @@ grep -Fq '"mode": "Integrated"' "$hook_config" ||
   fail "force-igpu does not recover the Integrated transition on the next sleep cycle"
 [[ ! -e $hook_marker ]] || fail "force-igpu leaves restore intent after a confirmed retry"
 pass "force-igpu retains restore intent until Integrated mode is confirmed"
+
+: >"$hook_calls"
+: >"$hook_queries"
+printf '{ "mode": "Integrated" }\n' >"$hook_config"
+env "${hook_env[@]}" bash "$hook_copy" pre suspend
+set +e
+HOOK_BLOCK_MODE=Vfio env "${hook_env[@]}" \
+  bash "$hook_copy" post suspend >/dev/null 2>&1
+blocked_request_status=$?
+set -e
+(( blocked_request_status != 0 )) || fail "force-igpu waits forever for a blocked GPU transition request"
+[[ -f $hook_marker ]] || fail "force-igpu discards restore intent after a blocked transition request"
+[[ ! -s $hook_queries ]] || fail "force-igpu polls before a blocked transition request returns"
+env "${hook_env[@]}" bash "$hook_copy" post suspend
+[[ ! -e $hook_marker ]] || fail "force-igpu cannot retry after a blocked transition request"
+pass "force-igpu bounds blocked transition requests and retains retry intent"
 
 : >"$hook_calls"
 printf '{ "mode": "Integrated" }\n' >"$hook_config"

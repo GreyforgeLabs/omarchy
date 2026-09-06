@@ -14,7 +14,10 @@ sleep_action=${SYSTEMD_SLEEP_ACTION:-$2}
 switch_mode() {
   local expected="$1" current
 
-  /usr/bin/supergfxctl -m "$expected"
+  if ! /usr/bin/timeout --kill-after=1s 3s /usr/bin/supergfxctl -m "$expected"; then
+    echo "Could not request the GPU transition to $expected mode" >&2
+    return 1
+  fi
   for _ in {1..10}; do
     if current=$(/usr/bin/timeout --kill-after=1s 2s /usr/bin/supergfxctl -g 2>/dev/null) &&
       [[ $current == "$expected" ]]; then
