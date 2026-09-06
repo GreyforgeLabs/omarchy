@@ -4,8 +4,8 @@ set -euo pipefail
 
 # The migration hands an existing Hermes Desktop install the Omarchy skin. It
 # is exercised here with the package probe and the skin hook stubbed, so a
-# migration that reached a Hermes Omarchy did not install, or that let a
-# Hermes refusing the write hold up later migrations, shows up in what it ran.
+# migration that reached a Hermes Omarchy did not install, or that marked a
+# failed hand-over done, shows up in what it ran.
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
@@ -22,7 +22,7 @@ mkdir -p "$mock_bin"
 
 cat >"$mock_bin/omarchy-pkg-present" <<'SH'
 #!/bin/bash
-[[ ${OMARCHY_TEST_DESKTOP_INSTALLED:-0} == 1 ]]
+[[ $1 == "hermes-desktop" && ${OMARCHY_TEST_DESKTOP_INSTALLED:-0} == 1 ]]
 SH
 
 cat >"$mock_bin/omarchy-theme-set-hermes" <<'SH'
@@ -53,5 +53,7 @@ run_migration || fail "migration exits clean with Hermes Desktop installed"
   fail "the skin is rendered, published and activated through the hook's deliberate form" "$(cat "$calls")"
 pass "migration hands the skin over through the hook"
 
-OMARCHY_TEST_HOOK_FAILS=1 run_migration || fail "a skin the hook cannot hand over does not hold up later migrations"
-pass "migration tolerates a skin the hook could not activate"
+if OMARCHY_TEST_HOOK_FAILS=1 run_migration; then
+  fail "a hand-over that failed on Omarchy's side stays pending"
+fi
+pass "migration stays pending when the hand-over fails"
