@@ -22,15 +22,26 @@ if [[ ${OMARCHY_REMOVE_DEV_ENV_SECURITY_NS:-0} != "1" ]]; then
   IFS=: read -r subuid subuid_count <<<"$subuid_entry"
   IFS=: read -r subgid subgid_count <<<"$subgid_entry"
 
-  exec unshare --user --mount \
-    --map-users "0:$outer_uid:1" --map-users "1:$subuid:$subuid_count" \
-    --map-groups "0:$outer_gid:1" --map-groups "1:$subgid:$subgid_count" \
-    env OMARCHY_REMOVE_DEV_ENV_SECURITY_NS=1 bash "$0"
+  namespace_args=(
+    --user --mount
+    --map-users "0:$outer_uid:1" --map-users "1:$subuid:$subuid_count"
+    --map-groups "0:$outer_gid:1" --map-groups "1:$subgid:$subgid_count"
+  )
+
+  # Probe only the prerequisites; failures from the actual test must propagate.
+  if unshare "${namespace_args[@]}" /usr/bin/true; then
+    exec unshare "${namespace_args[@]}" env OMARCHY_REMOVE_DEV_ENV_SECURITY_NS=1 bash "$0"
+  else
+    pass "user/mount namespace setup unavailable; skipping OCaml sudo namespace proof"
+    exit 0
+  fi
 fi
 
 (( EUID == 0 )) || fail "OCaml sudo proof did not enter its root namespace"
 
-test_tmp=$(mktemp -d)
+# Keep the synthetic user's paths traversable even when TMPDIR is private.
+test_tmp=$(mktemp -d /tmp/omarchy-remove-dev-env-security.XXXXXX)
+test_helper=$test_tmp/omarchy-remove-dev-env
 test_home=$test_tmp/home
 stub_bin=$test_home/bin
 event_log=$test_tmp/events
@@ -60,6 +71,7 @@ cleanup() {
 trap cleanup EXIT
 
 mount -t tmpfs -o mode=0755,suid tmpfs "$test_tmp"
+install -m 0755 "$ROOT/bin/omarchy-remove-dev-env" "$test_helper"
 mkdir -p "$stub_bin"
 touch "$event_log"
 
@@ -204,7 +216,7 @@ assert_ocaml_invalidations() {
 reset_case
 touch "$token"
 chown 0:0 "$token"
-run_user bash "$ROOT/bin/omarchy-remove-dev-env" ocaml
+run_user bash "$test_helper" ocaml
 wait_for_attack || fail "hostile opam did not exercise the detached sudo poller"
 [[ ! -e $protected_target ]] || fail "hostile opam reused root authorization"
 [[ ! -e $token ]] || fail "OCaml removal left a reusable sudo credential"
@@ -214,7 +226,7 @@ grep -Fxq 'remove-opam-no-update' "$event_log" || fail "OCaml removal did not us
 pass "OCaml removal keeps user-controlled opam outside reusable sudo authorization"
 
 reset_case
-if run_user env TEST_SUDO_NO_N=1 bash "$ROOT/bin/omarchy-remove-dev-env" ocaml; then
+if run_user env TEST_SUDO_NO_N=1 bash "$test_helper" ocaml; then
   fail "OCaml removal accepted sudo without --no-update support"
 fi
 ! grep -Fxq 'opam-ran' "$event_log" || fail "unsupported sudo reached user-controlled opam"
@@ -222,7 +234,7 @@ assert_ocaml_invalidations "unsupported sudo exit"
 pass "OCaml removal validates --no-update support before running opam"
 
 reset_case
-if run_user env TEST_RM_FAIL=1 bash "$ROOT/bin/omarchy-remove-dev-env" ocaml; then
+if run_user env TEST_RM_FAIL=1 bash "$test_helper" ocaml; then
   fail "OCaml removal ignored root cleanup failure"
 fi
 [[ ! -e $token ]] || fail "failed OCaml cleanup left a reusable sudo credential"
@@ -234,7 +246,7 @@ touch "$token"
 chown 0:0 "$token"
 setpriv --reuid=1000 --regid=1000 --clear-groups \
   env -i "${base_env[@]}" TEST_OPAM_BLOCK=1 \
-  /usr/bin/setsid bash "$ROOT/bin/omarchy-remove-dev-env" ocaml &
+  /usr/bin/setsid bash "$test_helper" ocaml &
 session=$!
 active_session=$session
 
@@ -256,7 +268,7 @@ assert_ocaml_invalidations "terminated OCaml removal"
 pass "OCaml removal invalidates credentials on signals"
 
 reset_case
-run_user bash "$ROOT/bin/omarchy-remove-dev-env" node
+run_user bash "$test_helper" node
 ! grep -Eq '^(invalidate|probe-no-update|unexpected-sudo)$' "$event_log" ||
   fail "non-OCaml removal crossed the sudo boundary"
 grep -Fxq 'mise:uninstall node --all' "$event_log" || fail "Node removal did not run"
