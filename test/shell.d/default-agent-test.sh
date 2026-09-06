@@ -95,6 +95,7 @@ export OMARCHY_TEST_AGENT_MENU_LOG="$menu_log"
 grok_package="npm:@xai-official/grok"
 omp_package="github:can1357/oh-my-pi"
 crush_package="crush"
+cursor_agent_package="cursor-agent"
 
 assert_lazy_stub() {
   local package=$1
@@ -112,17 +113,35 @@ assert_lazy_stub() {
 assert_lazy_stub "$grok_package" grok
 assert_lazy_stub "$omp_package" omp
 assert_lazy_stub "$crush_package" crush
+assert_lazy_stub "$cursor_agent_package" cursor-agent
 pass "custom agent lazy stubs preserve their mise packages"
 
-source "$ROOT/install/user/mise.sh"
+OMARCHY_TEST_MISSING_COMMAND=cursor-agent source "$ROOT/install/user/mise.sh"
 grep -Fx "$grok_package grok" "$stub_log" >/dev/null || fail "user setup creates the Grok lazy stub"
+grep -Fx "$cursor_agent_package" "$stub_log" >/dev/null || fail "user setup creates the Cursor CLI lazy stub"
 grep -Fx "$omp_package omp" "$stub_log" >/dev/null || fail "user setup creates the Oh My Pi lazy stub"
 grep -Fx "$crush_package" "$stub_log" >/dev/null || fail "user setup creates the Crush lazy stub"
 pass "user setup creates the custom agent lazy stubs"
 
 : >"$stub_log"
+source "$ROOT/install/user/mise.sh"
+grep -Fx "$cursor_agent_package" "$stub_log" >/dev/null && fail "user setup replaces an existing cursor-agent command"
+pass "user setup keeps an existing Cursor CLI install"
+
+: >"$stub_log"
 source "$ROOT/migrations/1785617047.sh" >/dev/null
 grep -Fx "$omp_package omp" "$stub_log" >/dev/null || fail "Oh My Pi migration creates a working lazy stub"
+
+: >"$stub_log"
+export OMARCHY_TEST_MISSING_COMMAND=cursor-agent
+source "$ROOT/migrations/1788577553.sh" >/dev/null
+unset OMARCHY_TEST_MISSING_COMMAND
+grep -Fx "$cursor_agent_package" "$stub_log" >/dev/null || fail "Cursor CLI migration creates a working lazy stub"
+
+: >"$stub_log"
+source "$ROOT/migrations/1788577553.sh" >/dev/null
+[[ ! -s $stub_log ]] || fail "Cursor CLI migration reinstalls an existing cursor-agent command"
+pass "Cursor CLI migration preserves an existing Cursor CLI install"
 
 : >"$stub_log"
 source "$ROOT/migrations/1785846769.sh" >/dev/null
@@ -136,6 +155,7 @@ touch "$test_home/.local/state/omarchy/preinstalls-removed"
 : >"$stub_log"
 source "$ROOT/migrations/1785617047.sh" >/dev/null
 source "$ROOT/migrations/1785846769.sh" >/dev/null
+OMARCHY_TEST_MISSING_COMMAND=cursor-agent source "$ROOT/migrations/1788577553.sh" >/dev/null
 [[ ! -s $stub_log ]] || fail "agent migrations respect the preinstall opt-out"
 [[ ! -e $test_home/.local/bin/omp ]] || fail "agent migration removes the obsolete Oh My Pi wrapper after opt-out"
 
@@ -160,10 +180,19 @@ rm "$test_home/.local/state/omarchy/preinstalls-removed"
 pass "agent migrations install working wrappers without overriding the preinstall opt-out"
 
 omarchy-remove-preinstalls >/dev/null
-for command in omp grok crush; do
+for command in omp grok crush cursor-agent; do
   [[ ! -e $test_home/.local/bin/$command ]] || fail "Remove Preinstalls deletes the $command lazy stub"
 done
 pass "Remove Preinstalls deletes every optional agent lazy stub"
+
+# Cursor's installer links the same path, so anything but the mise wrapper is
+# the user's own install.
+touch "$test_home/.local/bin/cursor-agent.official"
+ln -s cursor-agent.official "$test_home/.local/bin/cursor-agent"
+omarchy-remove-preinstalls >/dev/null
+[[ -L $test_home/.local/bin/cursor-agent ]] || fail "Remove Preinstalls keeps an official Cursor CLI install"
+rm -f "$test_home/.local/bin/cursor-agent" "$test_home/.local/bin/cursor-agent.official"
+pass "Remove Preinstalls keeps an official Cursor CLI install"
 
 [[ -z $(omarchy-default-agent) ]] || fail "default agent is unset until one is chosen"
 pass "default agent is unset until one is chosen"
@@ -220,6 +249,8 @@ declare -A expected_agents=(
   [gemini-cli]="gemini"
   [copilot]="copilot"
   [github-copilot]="copilot"
+  [cursor]="cursor-agent"
+  [cursor-agent]="cursor-agent"
 )
 
 declare -A expected_packages=(
@@ -232,6 +263,7 @@ declare -A expected_packages=(
   [grok]="$grok_package"
   [gemini]="gemini"
   [copilot]="copilot"
+  [cursor-agent]="$cursor_agent_package"
 )
 
 for selection in "${!expected_agents[@]}"; do
@@ -291,6 +323,35 @@ mapfile -d '' -t agent_open_args <"$agent_open_log"
 [[ ${#agent_open_args[@]} == 1 && ${agent_open_args[0]} == "omarchy-agent" ]] ||
   fail "installed agent opens in a new terminal after selection"
 pass "installed agents select and open without notifications"
+
+# Cursor's installer links the wrapper's path, and the mise shims precede
+# ~/.local/bin, so a mise copy would shadow the user's own install.
+touch "$test_home/.local/bin/cursor-agent.official"
+chmod +x "$test_home/.local/bin/cursor-agent.official"
+ln -s cursor-agent.official "$test_home/.local/bin/cursor-agent"
+: >"$terminal_log"
+: >"$mise_log"
+: >"$agent_open_log"
+omarchy-default-agent cursor-agent
+[[ ! -s $terminal_log ]] || fail "an official Cursor CLI install needs no install terminal"
+[[ ! -s $mise_log ]] || fail "an official Cursor CLI install is left to itself by mise"
+[[ $(<"$agent_file") == "cursor-agent" ]] || fail "an official Cursor CLI install becomes the default"
+mapfile -d '' -t agent_open_args <"$agent_open_log"
+[[ ${#agent_open_args[@]} == 1 && ${agent_open_args[0]} == "omarchy-agent" ]] ||
+  fail "an official Cursor CLI install opens after selection"
+rm -f "$test_home/.local/bin/cursor-agent" "$test_home/.local/bin/cursor-agent.official"
+printf '%s\n' copilot >"$agent_file"
+pass "selecting an official Cursor CLI install skips mise"
+
+# A file nothing can run is not an install; the wrapper is still wanted.
+touch "$test_home/.local/bin/cursor-agent"
+: >"$terminal_log"
+omarchy-default-agent cursor-agent
+mapfile -d '' -t terminal_args <"$terminal_log"
+[[ ${terminal_args[*]} == "omarchy-default-agent --install cursor-agent" ]] ||
+  fail "a dead file at the wrapper's path still installs Cursor CLI"
+rm -f "$test_home/.local/bin/cursor-agent"
+pass "a dead file at the wrapper's path does not pass for an install"
 
 : >"$agent_open_log"
 if omarchy-default-agent unsupported >"$test_tmp/invalid-output" 2>&1; then
@@ -376,6 +437,7 @@ assert_launch codex codex --approve-for-me -- "Review this project"
 assert_launch crush crush run "Review this project"
 assert_launch grok grok --permission-mode bypassPermissions -- "Review this project"
 assert_launch gemini gemini --yolo --prompt-interactive "Review this project"
+assert_launch cursor-agent cursor-agent --yolo --trust agent -- "Review this project"
 assert_launch hermes env -u HERMES_SESSION_SOURCE hermes chat --yolo --tui "--query=Review this project"
 assert_launch copilot copilot --allow-all --interactive "Review this project"
 pass "agent launcher adapts initial prompts for every supported agent"
@@ -395,6 +457,7 @@ assert_bypass codex codex --approve-for-me
 assert_bypass crush crush --yolo
 assert_bypass grok grok --permission-mode bypassPermissions
 assert_bypass gemini gemini --yolo
+assert_bypass cursor-agent cursor-agent --yolo --trust
 assert_bypass hermes hermes --yolo
 assert_bypass copilot copilot --allow-all
 pass "agent launcher skips permission prompts for every supported agent"

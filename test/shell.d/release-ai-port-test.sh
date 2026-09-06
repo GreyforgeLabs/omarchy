@@ -24,7 +24,7 @@ for (const [id, [pkg, glyph]] of Object.entries(selected)) {
   assert(fs.existsSync(path.join(root, `bin/omarchy-remove-ai-${id}`)), `${id} remover exists`)
 }
 assertDeepEqual(Object.keys(rows).filter(k => k.startsWith('remove.ai.')).sort(), Object.keys(selected).map(k => `remove.ai.${k}`).sort(), 'removal prerequisite imports no unselected apps')
-assertDeepEqual(Object.keys(rows).filter(k => k.startsWith('setup.default.agent.')).map(k => k.split('.').pop()).sort(), ['claude', 'codex', 'copilot', 'crush', 'gemini', 'grok', 'hermes', 'omp', 'openclaw', 'opencode', 'pi'], 'baseline agent choices survive with only Hermes and OpenClaw added')
+assertDeepEqual(Object.keys(rows).filter(k => k.startsWith('setup.default.agent.')).map(k => k.split('.').pop()).sort(), ['claude', 'codex', 'copilot', 'crush', 'cursor-agent', 'gemini', 'grok', 'hermes', 'omp', 'openclaw', 'opencode', 'pi'], 'baseline agent choices survive with only selected release agents added')
 assert(!fs.existsSync(path.join(root, 'bin/omarchy-theme-set-openclaw')), 'deferred OpenClaw theming is absent')
 JS
 
