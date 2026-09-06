@@ -24,7 +24,15 @@ for (const [id, [pkg, glyph]] of Object.entries(selected)) {
   assert(fs.existsSync(path.join(root, `bin/omarchy-remove-ai-${id}`)), `${id} remover exists`)
 }
 assertDeepEqual(Object.keys(rows).filter(k => k.startsWith('remove.ai.')).sort(), Object.keys(selected).map(k => `remove.ai.${k}`).sort(), 'removal prerequisite imports no unselected apps')
-assertDeepEqual(Object.keys(rows).filter(k => k.startsWith('setup.default.agent.')).map(k => k.split('.').pop()).sort(), ['claude', 'codex', 'copilot', 'crush', 'cursor-agent', 'gemini', 'grok', 'hermes', 'omp', 'openclaw', 'opencode', 'pi'], 'baseline agent choices survive with only selected release agents added')
+assertDeepEqual(Object.keys(rows).filter(k => k.startsWith('setup.default.agent.')).map(k => k.split('.').pop()).sort(), ['claude', 'codex', 'copilot', 'crush', 'cursor-agent', 'gemini', 'grok', 'hermes', 'muse', 'omp', 'openclaw', 'opencode', 'pi'], 'baseline agent choices survive with only selected release agents added')
+for (const id of ['setup.default.agent.cursor-agent', 'setup.default.editor.cursor', 'install.editor.cursor']) {
+  assertEqual(rows[id].icon, '\ue90d', `${id} uses the upstream Cursor glyph`)
+  assertEqual(rows[id].iconFont, 'omarchy', `${id} uses the packaged icon font`)
+}
+assertEqual(rows['setup.default.editor.cursor'].when, 'omarchy-cmd-present cursor', 'Cursor editor retains baseline default visibility')
+assertEqual(rows['install.editor.cursor'].when, '! omarchy-pkg-present cursor-bin', 'Cursor editor retains baseline install visibility')
+assertEqual(rows['setup.default.agent.muse'].icon, '󰛤', 'Muse uses the Nerd infinity glyph')
+assert(!rows['setup.default.agent.muse'].iconFont, 'Muse needs no Omarchy font addition')
 assert(!fs.existsSync(path.join(root, 'bin/omarchy-theme-set-openclaw')), 'deferred OpenClaw theming is absent')
 JS
 
