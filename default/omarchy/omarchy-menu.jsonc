@@ -23,6 +23,8 @@
   "setup": {"icon":"","label":"Setup","aliases":["settings"]},
   "install": {"icon":"󰉉","label":"Install"},
   "remove": {"icon":"󰭌","label":"Remove","aliases":["uninstall"]},
+  "remove.ai": {"icon":"󱚤","label":"AI","title":"Remove"},
+  "remove.ai.t3-code": {"icon":"","iconFont":"omarchy","label":"T3 Code","when":"omarchy-pkg-present t3code-bin","action":"omarchy-launch-floating-terminal-with-presentation omarchy-remove-ai-t3-code"},
   "update": {"icon":"","label":"Update","aliases":["restart","refresh"]},
   "about": {"icon":"","label":"About","action":"omarchy-launch-about"},
   "system": {"icon":"","label":"System","aliases":["power-menu"]},
