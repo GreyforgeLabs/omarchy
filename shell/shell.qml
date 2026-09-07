@@ -355,6 +355,12 @@ ShellRoot {
     return shell.manifestHasKind(manifest, "bar")
   }
 
+  function pluginIsIndicatorsClone(manifest) {
+    var metadata = manifest && Util.isPlainObject(manifest.omarchy) ? manifest.omarchy : null
+    return shell.manifestHasKind(manifest, "bar-widget")
+      && !!metadata && String(metadata.clonedFrom || "") === "omarchy.indicators"
+  }
+
   function publicIdleConfigFor(manifest) {
     var metadata = manifest && Util.isPlainObject(manifest.omarchy) ? manifest.omarchy : null
     if (!metadata || String(metadata.clonedFrom || "") !== "omarchy.idle") return ({})
@@ -519,6 +525,7 @@ ShellRoot {
     return [
       allowOwnService ? "own-service" : "no-own-service",
       barCapabilities ? "bar" : "no-bar",
+      allowOwnService && shell.pluginIsIndicatorsClone(manifest) ? "indicators" : "no-indicators",
       shell.manifestHasKind(manifest, "menu") ? "menu" : "no-menu"
     ].join("|")
   }
@@ -582,12 +589,13 @@ ShellRoot {
     // makes QML re-enter the binding and report a loop on the caller's service
     // property, even though the resulting proxy is otherwise acyclic.
     var firstPartyServices = ({})
-    if (barCapabilities) {
-      var serviceIds = ["omarchy.idle", "omarchy.media", "omarchy.nightlight", "omarchy.notifications"]
-      for (var i = 0; i < serviceIds.length; i++) {
-        var serviceId = serviceIds[i]
-        firstPartyServices[serviceId] = shell.pluginFirstPartyServiceFor(cacheKey, key, serviceId)
-      }
+    var serviceIds = barCapabilities
+      ? ["omarchy.idle", "omarchy.media", "omarchy.nightlight", "omarchy.notifications"]
+      : (allowOwnService && shell.pluginIsIndicatorsClone(manifest)
+        ? ["omarchy.idle", "omarchy.nightlight", "omarchy.notifications"] : [])
+    for (var i = 0; i < serviceIds.length; i++) {
+      var serviceId = serviceIds[i]
+      firstPartyServices[serviceId] = shell.pluginFirstPartyServiceFor(cacheKey, key, serviceId)
     }
 
     var api = pluginShellApiComponent.createObject(null, {
@@ -603,7 +611,14 @@ ShellRoot {
       _firstPartyServiceLookup: function(requestedId) {
         if (allowOwnService && shell.pluginOwnsTarget(key, requestedId))
           return shell.pluginServiceFor(key, requestedId)
-        return hasCurrentBarCapabilities() ? (firstPartyServices[requestedId] || null) : null
+        // Indicators clones have no service of their own. Under the trusted
+        // bar they need only these prebuilt non-authentication proxies, not
+        // full-bar capabilities or access to another plugin's live service.
+        var indicatorsAllowed = allowOwnService && shell.pluginIsIndicatorsClone(currentManifest())
+          && shell.activeBarManifest && shell.activeBarManifest.__isFirstParty
+          && shell.pluginRegistry.isEnabled(key) && shell.barEntryConfigured(key)
+        return hasCurrentBarCapabilities() || indicatorsAllowed
+          ? (firstPartyServices[requestedId] || null) : null
       },
       _barEntryShellLookup: function(ownerId, moduleName) {
         return hasCurrentBarCapabilities()
