@@ -567,6 +567,14 @@ assert_launch hermes env -u HERMES_SESSION_SOURCE hermes chat --yolo --tui "--qu
 assert_launch copilot copilot --allow-all --interactive "Review this project"
 pass "agent launcher adapts initial prompts for every supported agent"
 
+printf '%s\n' "cursor-agent" >"$agent_file"
+for literal_cursor_prompt in update login help --help $'--option !Crash {$(touch must-not-run)}\ntrailing\\ '; do
+  omarchy-agent-prompt "$literal_cursor_prompt"
+  assert_launched cursor-agent "binds prompt behind the explicit agent subcommand" \
+    cursor-agent --yolo --trust agent -- "$literal_cursor_prompt"
+done
+pass "Cursor CLI receives subcommand-like and option-like prompts as literal agent arguments"
+
 literal_muse_prompt=$'--disable-sandbox !Crash {$(touch must-not-run)}\ntrailing\\ '
 printf '%s\n' "muse" >"$agent_file"
 omarchy-agent-prompt "$literal_muse_prompt"
