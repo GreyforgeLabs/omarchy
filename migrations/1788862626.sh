@@ -12,4 +12,9 @@ if omarchy-hw-elgato-camlink-4k; then
   sudo udevadm trigger --action=add --subsystem-match=video4linux
   sudo udevadm settle
   [[ -e /dev/camlink4k ]] && sudo setfacl -b /dev/camlink4k
+
+  # The trigger only starts the relay when the rule is new to the device.
+  # Start it outright so a failed module build or loopback surfaces here,
+  # with the raw camera hidden, rather than passing silently.
+  sudo systemctl start v4l2-relayd@camlink.service
 fi

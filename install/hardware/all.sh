@@ -7,7 +7,6 @@ run_logged "$OMARCHY_INSTALL/hardware/network.sh"
 run_logged "$OMARCHY_INSTALL/hardware/set-wireless-regdom.sh"
 run_logged "$OMARCHY_INSTALL/hardware/fix-fkeys.sh"
 run_logged "$OMARCHY_INSTALL/hardware/fix-synaptic-touchpad.sh"
-run_logged "$OMARCHY_INSTALL/hardware/fix-elgato-camlink-4k.sh"
 run_logged "$OMARCHY_INSTALL/hardware/bluetooth.sh"
 run_logged "$OMARCHY_INSTALL/hardware/nvidia.sh"
 run_logged "$OMARCHY_INSTALL/hardware/vulkan.sh"
@@ -24,6 +23,9 @@ run_logged "$OMARCHY_INSTALL/hardware/intel/ipu7-camera.sh"
 run_logged "$OMARCHY_INSTALL/hardware/intel/fred.sh"
 run_logged "$OMARCHY_INSTALL/hardware/intel/fix-wifi7-eht.sh"
 run_logged "$OMARCHY_INSTALL/hardware/intel/sof-firmware.sh"
+
+# Pulls in v4l2loopback-dkms, so it sits after the Panther Lake kernel swap.
+run_logged "$OMARCHY_INSTALL/hardware/fix-elgato-camlink-4k.sh"
 
 # Rebuilds the boot image, so it has to follow the Panther Lake kernel swap
 # above rather than sit with the other Dell leaf at the top of this file.
