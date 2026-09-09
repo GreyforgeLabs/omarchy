@@ -5,9 +5,11 @@
 
 # Export the current theme's gum styling so gum widgets match the active theme
 # even after a theme switch (the inherited environment is captured at login).
-source omarchy-restart-gum
+source "$OMARCHY_PATH/bin/omarchy-restart-gum"
 
 cmd="$*"
-presentation_script="omarchy-show-logo; $cmd; if (( \$? != 130 )); then omarchy-show-done; fi"
+logo_command=$(printf '%q' "$OMARCHY_PATH/bin/omarchy-show-logo")
+done_command=$(printf '%q' "$OMARCHY_PATH/bin/omarchy-show-done")
+presentation_script="$logo_command; $cmd; if (( \$? != 130 )); then $done_command; fi"
 
 exec setsid uwsm-app -- xdg-terminal-exec --app-id=org.omarchy.terminal --title=Omarchy -e bash -c "$presentation_script"

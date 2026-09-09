@@ -8,15 +8,18 @@ setup="$ROOT/bin/omarchy-setup-security-fido2"
 
 test_tmp=$(mktemp -d)
 stub_bin="$test_tmp/bin"
+poison_bin="$test_tmp/poison-bin"
 stages="$test_tmp/stages.log"
 calls="$test_tmp/calls.log"
 pamu_targets="$test_tmp/pamu-targets.log"
 bare_mktemp="$test_tmp/bare-mktemp.log"
+poison_calls="$test_tmp/poison-calls.log"
+sudo_ticket="$test_tmp/sudo-ticket"
 credential="tester:credential-handle,public-key,es256,+presence"
 authdir="$test_tmp/etc-fido2"
 authfile="$authdir/fido2"
 setup_copy="$test_tmp/setup.sh"
-mkdir -p "$stub_bin"
+mkdir -p "$stub_bin" "$poison_bin"
 
 cleanup() {
   rm -rf "$test_tmp"
@@ -39,8 +42,28 @@ occurrences=$(grep -Fxc 'authfile=/etc/fido2/fido2' "$setup") || occurrences=0
   fail "the setup names its authfile exactly once" "found $occurrences occurrences"
 pass "setup names its FIDO2 paths once each, and the test drives a retargeted copy"
 
+occurrences=$(grep -Fxc 'PATH="$OMARCHY_PATH/bin:/usr/local/bin:/usr/bin:/bin"' "$setup") || occurrences=0
+(( occurrences == 1 )) ||
+  fail "FIDO2 setup defines one trusted command path" "found $occurrences occurrences"
+
 sed -e "s|^authdir=/etc/fido2$|authdir=$authdir|" \
-  -e "s|^authfile=/etc/fido2/fido2$|authfile=$authfile|" "$setup" >"$setup_copy"
+  -e "s|^authfile=/etc/fido2/fido2$|authfile=$authfile|" \
+  -e "s|^PATH=\"\$OMARCHY_PATH/bin:/usr/local/bin:/usr/bin:/bin\"$|PATH=\"$stub_bin:$ROOT/bin:/usr/bin:/bin\"|" \
+  -e "s|/usr/bin/sudo|$stub_bin/sudo|g" \
+  -e "s|/usr/bin/fido2-token|$stub_bin/fido2-token|g" \
+  -e "s|/usr/bin/pamu2fcfg|$stub_bin/pamu2fcfg|g" \
+  -e "s|\"\$OMARCHY_PATH/bin/omarchy-pkg-add\"|\"$stub_bin/omarchy-pkg-add\"|" \
+  "$setup" >"$setup_copy"
+
+grep -Fxq "PATH=\"$stub_bin:$ROOT/bin:/usr/bin:/bin\"" "$setup_copy" ||
+  fail "the test redirects the trusted FIDO2 command path"
+grep -Fq "$stub_bin/sudo -k" "$setup_copy" ||
+  fail "the test redirects fixed sudo invocations"
+grep -Fq "$stub_bin/fido2-token -L" "$setup_copy" ||
+  fail "the test redirects the fixed hardware probe"
+grep -Fq "$stub_bin/pamu2fcfg" "$setup_copy" ||
+  fail "the test redirects the fixed credential generator"
+pass "FIDO2 setup limits command lookup and fixes its security-sensitive executables"
 
 # The setup must not create a caller-owned named file for pamu2fcfg. A bare
 # mktemp is therefore a test failure; only the sudo stub below may invoke the
@@ -71,13 +94,21 @@ reject() {
   exit 97
 }
 
-if [[ ${TEST_TMP:-} != /* || ${TEST_AUTHDIR:-} != "$TEST_TMP/etc-fido2" || ${TEST_AUTHFILE:-} != "$TEST_AUTHDIR/fido2" || ${TEST_STAGES:-} != "$TEST_TMP/stages.log" || ${TEST_LOG:-} != "$TEST_TMP/calls.log" || ! ${TEST_FAIL_CHMOD:-} =~ ^[01]$ || ! ${TEST_FAIL_MV:-} =~ ^[01]$ ]]; then
+if [[ ${TEST_TMP:-} != /* || ${TEST_AUTHDIR:-} != "$TEST_TMP/etc-fido2" || ${TEST_AUTHFILE:-} != "$TEST_AUTHDIR/fido2" || ${TEST_STAGES:-} != "$TEST_TMP/stages.log" || ${TEST_LOG:-} != "$TEST_TMP/calls.log" || ${TEST_SUDO_TICKET:-} != "$TEST_TMP/sudo-ticket" || ${TEST_POISON_CALLS:-} != "$TEST_TMP/poison-calls.log" || ! ${TEST_FAIL_CHMOD:-} =~ ^[01]$ || ! ${TEST_FAIL_MV:-} =~ ^[01]$ ]]; then
   reject "$@"
 fi
 
 printf 'sudo' >>"$TEST_LOG"
 printf '\t%s' "$@" >>"$TEST_LOG"
 printf '\n' >>"$TEST_LOG"
+
+if [[ ${1:-} == "-k" ]]; then
+  (( $# == 1 )) || reject "$@"
+  /usr/bin/rm -f -- "$TEST_SUDO_TICKET"
+  exit 0
+fi
+
+: >"$TEST_SUDO_TICKET"
 
 safe_stage_path() {
   local candidate=$1
@@ -98,6 +129,9 @@ recorded_stage() {
 }
 
 case "${1:-}" in
+  package-authorize)
+    (( $# == 1 )) || reject "$@"
+    ;;
   install)
     if (( $# != 9 )) || [[ $2 != "-d" || $3 != "-m" || $4 != "755" || $5 != "-o" || $6 != "root" || $7 != "-g" || $8 != "root" || $9 != "$TEST_AUTHDIR" ]]; then
       reject "$@"
@@ -206,20 +240,33 @@ SH
 cat >"$stub_bin/fido2-token" <<'SH'
 #!/bin/bash
 
+if [[ -e $TEST_SUDO_TICKET ]]; then
+  printf '%s\n' fido2-token-with-live-sudo >>"$TEST_POISON_CALLS"
+  exit 94
+fi
+
 echo '/dev/hidraw0: vendor=0x1050, product=0x0407 (Yubico YubiKey)'
 SH
 
 cat >"$stub_bin/omarchy-pkg-add" <<'SH'
 #!/bin/bash
+
+"$TEST_SUDO_STUB" package-authorize
 SH
 
 # Record what pamu2fcfg's stdout actually targets. The fixed implementation
-# gives it a pipe to privileged tee; refusing a regular-file descriptor keeps a
-# regression from writing credential bytes into a caller-owned named file.
+# captures it through a pipe while sudo is cold; refusing a regular-file
+# descriptor keeps a regression from writing credential bytes into a
+# caller-owned named file.
 cat >"$stub_bin/pamu2fcfg" <<'SH'
 #!/bin/bash
 
 set -euo pipefail
+
+if [[ -e $TEST_SUDO_TICKET ]]; then
+  printf '%s\n' pamu2fcfg-with-live-sudo >>"$TEST_POISON_CALLS"
+  exit 94
+fi
 
 target=$(readlink /proc/self/fd/1)
 printf '%s\n' "$target" >>"$TEST_PAMU_TARGETS"
@@ -242,14 +289,25 @@ case "$TEST_PAMU_MODE" in
 esac
 SH
 
+for command in omarchy-pkg-add fido2-token pamu2fcfg; do
+  cat >"$poison_bin/$command" <<'SH'
+#!/bin/bash
+
+printf '%s\n' "${0##*/}" >>"$TEST_POISON_CALLS"
+exit 93
+SH
+done
+
 chmod +x "$stub_bin/mktemp" "$stub_bin/sudo" "$stub_bin/fido2-token" \
-  "$stub_bin/omarchy-pkg-add" "$stub_bin/pamu2fcfg"
+  "$stub_bin/omarchy-pkg-add" "$stub_bin/pamu2fcfg" "$poison_bin"/*
 
 reset_run() {
   : >"$calls"
   : >"$stages"
   : >"$pamu_targets"
   : >"$bare_mktemp"
+  : >"$poison_calls"
+  rm -f "$sudo_ticket"
   rm -rf "$authdir"
 }
 
@@ -258,13 +316,29 @@ invoke_setup() {
   local fail_chmod="${2:-0}"
   local fail_mv="${3:-0}"
   local mktemp_mode="${4:-normal}"
+  local status
 
-  TEST_AUTHDIR="$authdir" TEST_AUTHFILE="$authfile" TEST_BARE_MKTEMP="$bare_mktemp" \
+  if TEST_AUTHDIR="$authdir" TEST_AUTHFILE="$authfile" TEST_BARE_MKTEMP="$bare_mktemp" \
     TEST_CREDENTIAL="$credential" TEST_FAIL_CHMOD="$fail_chmod" TEST_FAIL_MV="$fail_mv" \
     TEST_LOG="$calls" TEST_MKTEMP_MODE="$mktemp_mode" TEST_PAMU_MODE="$pamu_mode" \
-    TEST_PAMU_TARGETS="$pamu_targets" TEST_STAGES="$stages" TEST_TMP="$test_tmp" \
-    PATH="$stub_bin:$ROOT/bin:$PATH" \
-    bash "$setup_copy" </dev/null >/dev/null
+    TEST_PAMU_TARGETS="$pamu_targets" TEST_POISON_CALLS="$poison_calls" \
+    TEST_STAGES="$stages" TEST_SUDO_STUB="$stub_bin/sudo" TEST_SUDO_TICKET="$sudo_ticket" \
+    TEST_TMP="$test_tmp" PATH="$poison_bin:$stub_bin:$ROOT/bin:$PATH" \
+    bash "$setup_copy" </dev/null >/dev/null; then
+    status=0
+  else
+    status=$?
+  fi
+
+  [[ $(head -n 1 "$calls") == $'sudo\t-k' ]] ||
+    fail "FIDO2 setup begins with cold sudo credentials" "$(cat "$calls")"
+  [[ $(tail -n 1 "$calls") == $'sudo\t-k' ]] ||
+    fail "FIDO2 setup invalidates sudo credentials before returning" "$(cat "$calls")"
+  [[ ! -e $sudo_ticket ]] || fail "FIDO2 setup leaves no reusable sudo credentials"
+  [[ ! -s $poison_calls ]] ||
+    fail "FIDO2 setup executes a user-PATH callback" "$(cat "$poison_calls")"
+
+  return "$status"
 }
 
 run_setup() {
@@ -376,7 +450,7 @@ assert_pipe_target
 grep -Fxq $'sudo\tmktemp\t'"$authfile.new.XXXXXX" "$calls" ||
   fail "FIDO2 setup asks root to create a unique sibling stage" "$(cat "$calls")"
 grep -Fxq $'sudo\ttee\t'"$stage_path" "$calls" ||
-  fail "pamu2fcfg is piped into the exact privileged stage" "$(cat "$calls")"
+  fail "the captured credential is written into the exact privileged stage" "$(cat "$calls")"
 grep -Fxq $'sudo\tchmod\t644\t'"$stage_path" "$calls" ||
   fail "FIDO2 setup makes the completed authfile PAM-readable" "$(cat "$calls")"
 grep -Fxq $'sudo\tmv\t-Tf\t'"$stage_path"$'\t'"$authfile" "$calls" ||
@@ -391,6 +465,7 @@ grep -Fxq $'sudo\tmv\t-Tf\t'"$stage_path"$'\t'"$authfile" "$calls" ||
 [[ $(stat -c %a "$authfile") == "644" ]] ||
   fail "the published authfile is mode 644" "got: $(stat -c %a "$authfile")"
 pass "FIDO2 setup pipes the credential into a unique root-created stage and publishes it atomically"
+pass "FIDO2 utilities run cold and setup revokes sudo before returning"
 
 # A chmod failure happens after a complete credential has been written but
 # before publication. It must abort the setup and leave the EXIT trap armed.
@@ -422,33 +497,37 @@ grep -Fxq $'sudo\tmv\t-Tf\t'"$failed_stage"$'\t'"$authfile" "$calls" ||
 assert_failed_stage_cleanup
 pass "FIDO2 setup propagates mv failure and cleans its privileged stage"
 
-# Emit a valid credential and then fail. Without pipefail, tee's success masks
-# pamu2fcfg's status and the nonempty file would be published.
+# Emit a valid credential and then fail. The command substitution must preserve
+# pamu2fcfg's failure and prevent its output from reaching privileged staging.
 reset_run
 if invoke_setup fail >/dev/null 2>&1; then
   fail "a failing pamu2fcfg pipeline fails setup"
 fi
 assert_pipe_target
-assert_failed_stage_cleanup
+[[ ! -s $stages ]] || fail "a failing pamu2fcfg creates no privileged stage"
+! grep -Fq $'sudo\tinstall\t' "$calls" ||
+  fail "a failing pamu2fcfg reaches no privileged write" "$(cat "$calls")"
 ! grep -Fq $'sudo\tchmod\t' "$calls" ||
   fail "a failed pamu2fcfg result is never prepared for publication" "$(cat "$calls")"
 ! grep -Fq $'sudo\tmv\t' "$calls" ||
   fail "a failed pamu2fcfg result is never published" "$(cat "$calls")"
-pass "FIDO2 setup propagates pamu2fcfg failure and cleans its privileged stage"
+pass "FIDO2 setup rejects a failed credential before privileged staging"
 
-# A successful pipeline can still produce no credential. Reject that before
-# chmod or rename, and clean the exact stage just as on command failure.
+# A successful pamu2fcfg invocation can still produce no credential. Reject
+# that result before creating a privileged stage.
 reset_run
 if invoke_setup empty >/dev/null 2>&1; then
   fail "an empty pamu2fcfg result fails setup"
 fi
 assert_pipe_target
-assert_failed_stage_cleanup
+[[ ! -s $stages ]] || fail "an empty pamu2fcfg result creates no privileged stage"
+! grep -Fq $'sudo\tinstall\t' "$calls" ||
+  fail "an empty pamu2fcfg result reaches no privileged write" "$(cat "$calls")"
 ! grep -Fq $'sudo\tchmod\t' "$calls" ||
   fail "an empty pamu2fcfg result is never prepared for publication" "$(cat "$calls")"
 ! grep -Fq $'sudo\tmv\t' "$calls" ||
   fail "an empty pamu2fcfg result is never published" "$(cat "$calls")"
-pass "FIDO2 setup rejects an empty credential and cleans its privileged stage"
+pass "FIDO2 setup rejects an empty credential before privileged staging"
 
 # mktemp's output is an operand for a privileged tee, chmod, mv and rm. Take
 # only the name this script asked for: a stage path outside that shape must stop
