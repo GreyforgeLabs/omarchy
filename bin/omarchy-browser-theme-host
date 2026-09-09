@@ -3,9 +3,6 @@
 # omarchy:summary=Native messaging host: stream the current theme palette to the browser extension
 # omarchy:hidden=true
 
-# Copyright (c) 2026 Bjarne Oeverli
-# MIT license: default/chromium/extensions/theme-sync/LICENSE
-
 # No `set -e`: this is a long-lived port. A failed read or a theme directory that
 # briefly does not exist mid-swap must not take the host down, or the extension
 # loses the palette until the browser restarts.

@@ -2,7 +2,7 @@
 
 Omarchy Theme Sync exposes the current desktop palette to websites through CSS variables and `window.omarchy`. Websites choose whether to use these values; the extension does not automatically restyle every site or change Chromium's toolbar theme.
 
-The runtime and regression fixtures are adapted from [omacom/omarchy-theme-sync](https://github.com/omacom/omarchy-theme-sync), including its multi-background and theme-asset API. The upstream MIT notice is retained in `default/chromium/extensions/theme-sync/LICENSE`. The square icon is an [official Omarchy brand asset](https://omarchy.org/brand), not a grant of trademark rights. No private signing key is included or required.
+The runtime and regression fixtures are adapted from [omacom/omarchy-theme-sync](https://github.com/omacom/omarchy-theme-sync), including its multi-background and theme-asset API. The square icon is an [official Omarchy brand asset](https://omarchy.org/brand), not a grant of trademark rights. No private signing key is included or required.
 
 ## How It Works
 
