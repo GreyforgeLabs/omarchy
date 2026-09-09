@@ -1,5 +1,5 @@
-# Write repository files for both offline-install finalization and refreshes.
-# Callers choose the destination so refreshes can stage files before using sudo.
+# Replace offline-install repositories with online defaults during finalization.
+# Refreshes preserve the installed ARM configuration instead of using a template.
 pacman_write_repository_config() {
   local channel=$1 config=$2 mirrorlist=$3
   local defaults="$OMARCHY_PATH/default/pacman"
