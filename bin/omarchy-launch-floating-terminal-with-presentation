@@ -1,7 +1,18 @@
 #!/bin/bash
 
 # omarchy:summary=Launch a floating terminal with the Omarchy presentation wrapper
-# omarchy:args=<command>
+# omarchy:args=[--cold-sudo] <command>
+
+# Security-sensitive flows can revoke any reusable sudo authorization before
+# presentation helpers or the terminal launcher get a chance to run.
+if [[ ${1:-} == "--cold-sudo" ]]; then
+  if ! /usr/bin/sudo -k >/dev/null; then
+    echo "Unable to launch with a cold sudo credential state." >&2
+    exit 1
+  fi
+
+  shift
+fi
 
 # Export the current theme's gum styling so gum widgets match the active theme
 # even after a theme switch (the inherited environment is captured at login).

@@ -324,6 +324,11 @@ assert(
   defaultById['setup.security.passwordless-sudo'].action.includes('omarchy-sudo-passwordless'),
   'menu places Passwordless Sudo under Setup > Security'
 )
+assertEqual(
+  defaultById['setup.security.fido2'].action,
+  '"$OMARCHY_PATH/bin/omarchy-launch-floating-terminal-with-presentation" --cold-sudo "$OMARCHY_PATH/bin/omarchy-setup-security-fido2"',
+  'menu revokes cached sudo before any FIDO2 presentation callback'
+)
 assert(
   !defaultById['trigger.toggle.direct-boot'] && !defaultById['trigger.toggle.passwordless-sudo'],
   'menu removes the relocated toggles from Trigger > Toggle'
