@@ -110,10 +110,12 @@ cat >"$stub_dir/omarchy-plymouth-switcher" <<'STUB'
 printf '%s\n' "$OMARCHY_TEST_UNLOCK_NAME"
 STUB
 
-# Run the real presentation wrapper while replacing only its terminal launcher.
+# Run a source-identical presentation wrapper while replacing only its terminal launcher.
 # The launcher stub executes the final `bash -c` locally instead of opening a
 # terminal window.
-ln -s "$ROOT/bin/omarchy-launch-floating-terminal-with-presentation" "$stub_dir/omarchy-launch-floating-terminal-with-presentation"
+cp "$ROOT/bin/omarchy-launch-floating-terminal-with-presentation" "$stub_dir/bin/omarchy-launch-floating-terminal-with-presentation"
+cp "$ROOT/bin/omarchy-security-functions" "$stub_dir/bin/omarchy-security-functions"
+ln -s "$stub_dir/bin/omarchy-launch-floating-terminal-with-presentation" "$stub_dir/omarchy-launch-floating-terminal-with-presentation"
 
 cat >"$stub_dir/bin/omarchy-restart-gum" <<'STUB'
 #!/bin/bash

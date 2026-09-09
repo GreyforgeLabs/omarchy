@@ -1,10 +1,24 @@
-#!/bin/bash
+#!/bin/bash -p
 
 # omarchy:summary=Set up FIDO2 authentication for sudo and polkit
 # omarchy:requires-sudo=true
 
+# The shebang's -p must take effect before Bash can process inherited startup
+# hooks that would otherwise run ahead of FIDO2's sudo isolation.
+if [[ $- != *p* ]]; then
+  echo "Refusing an unsafe Bash startup for FIDO2 setup." >&2
+  exit 126
+fi
+
+security_entrypoint=$(/usr/bin/readlink -e -- "${BASH_SOURCE[0]}") || exit 126
+source "${security_entrypoint%/*}/omarchy-security-functions" || exit 126
+omarchy_security_require_privileged_bash_startup || exit 126
+
 set -e
 set -o pipefail
+
+omarchy_security_sanitize_bash_environment "$0" "$@" || exit 126
+omarchy_security_require_source_root "$security_entrypoint" || exit 126
 
 # Do not let user-controlled PATH entries run while package authorization may
 # still be reusable by a child process.

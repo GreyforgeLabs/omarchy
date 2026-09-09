@@ -5,6 +5,7 @@ set -euo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 setup="$ROOT/bin/omarchy-setup-security-fido2"
+security_functions="$ROOT/bin/omarchy-security-functions"
 
 test_tmp=$(mktemp -d)
 stub_bin="$test_tmp/bin"
@@ -14,11 +15,12 @@ calls="$test_tmp/calls.log"
 pamu_targets="$test_tmp/pamu-targets.log"
 bare_mktemp="$test_tmp/bare-mktemp.log"
 poison_calls="$test_tmp/poison-calls.log"
+startup_poison="$test_tmp/bash-env"
 sudo_ticket="$test_tmp/sudo-ticket"
 credential="tester:credential-handle,public-key,es256,+presence"
 authdir="$test_tmp/etc-fido2"
 authfile="$authdir/fido2"
-setup_copy="$test_tmp/setup.sh"
+setup_copy="$stub_bin/omarchy-setup-security-fido2"
 mkdir -p "$stub_bin" "$poison_bin"
 
 cleanup() {
@@ -54,6 +56,21 @@ sed -e "s|^authdir=/etc/fido2$|authdir=$authdir|" \
   -e "s|/usr/bin/pamu2fcfg|$stub_bin/pamu2fcfg|g" \
   -e "s|\"\$OMARCHY_PATH/bin/omarchy-pkg-add\"|\"$stub_bin/omarchy-pkg-add\"|" \
   "$setup" >"$setup_copy"
+cp "$security_functions" "$stub_bin/omarchy-security-functions"
+
+[[ $(head -n 1 "$setup") == '#!/bin/bash -p' ]] ||
+  fail "FIDO2 setup requests privileged Bash at the kernel boundary"
+unsafe_startup_status=0
+/usr/bin/bash "$setup_copy" -p </dev/null >/dev/null 2>&1 || unsafe_startup_status=$?
+(( unsafe_startup_status == 126 )) ||
+  fail "FIDO2 setup rejects an ordinary Bash launch with a decoy -p argument" "got status $unsafe_startup_status"
+pass "FIDO2 setup requires a verified privileged Bash startup"
+
+mismatched_root_status=0
+OMARCHY_PATH="$test_tmp/mismatched-root" /usr/bin/bash -p "$setup_copy" </dev/null >/dev/null 2>&1 || mismatched_root_status=$?
+(( mismatched_root_status == 126 )) ||
+  fail "FIDO2 setup rejects a mismatched Omarchy source root" "got status $mismatched_root_status"
+pass "FIDO2 setup binds runtime helpers to its own source root"
 
 grep -Fxq "PATH=\"$stub_bin:$ROOT/bin:/usr/bin:/bin\"" "$setup_copy" ||
   fail "the test redirects the trusted FIDO2 command path"
@@ -64,6 +81,12 @@ grep -Fq "$stub_bin/fido2-token -L" "$setup_copy" ||
 grep -Fq "$stub_bin/pamu2fcfg" "$setup_copy" ||
   fail "the test redirects the fixed credential generator"
 pass "FIDO2 setup limits command lookup and fixes its security-sensitive executables"
+
+cat >"$startup_poison" <<'SH'
+if [[ -e $TEST_SUDO_TICKET ]]; then
+  printf '%s\n' bash-env-with-live-sudo >>"$TEST_POISON_CALLS"
+fi
+SH
 
 # The setup must not create a caller-owned named file for pamu2fcfg. A bare
 # mktemp is therefore a test failure; only the sudo stub below may invoke the
@@ -318,13 +341,19 @@ invoke_setup() {
   local mktemp_mode="${4:-normal}"
   local status
 
-  if TEST_AUTHDIR="$authdir" TEST_AUTHFILE="$authfile" TEST_BARE_MKTEMP="$bare_mktemp" \
+  if /usr/bin/env \
+    TEST_AUTHDIR="$authdir" TEST_AUTHFILE="$authfile" TEST_BARE_MKTEMP="$bare_mktemp" \
     TEST_CREDENTIAL="$credential" TEST_FAIL_CHMOD="$fail_chmod" TEST_FAIL_MV="$fail_mv" \
     TEST_LOG="$calls" TEST_MKTEMP_MODE="$mktemp_mode" TEST_PAMU_MODE="$pamu_mode" \
     TEST_PAMU_TARGETS="$pamu_targets" TEST_POISON_CALLS="$poison_calls" \
     TEST_STAGES="$stages" TEST_SUDO_STUB="$stub_bin/sudo" TEST_SUDO_TICKET="$sudo_ticket" \
-    TEST_TMP="$test_tmp" PATH="$poison_bin:$stub_bin:$ROOT/bin:$PATH" \
-    bash "$setup_copy" </dev/null >/dev/null; then
+    TEST_TMP="$test_tmp" OMARCHY_PATH="$test_tmp" PATH="$poison_bin:$stub_bin:$ROOT/bin:$PATH" \
+    BASH_ENV="$startup_poison" ENV="$startup_poison" \
+    SHELLOPTS=braceexpand:hashall:interactive-comments:xtrace \
+    'PS4=$(if [[ -e $TEST_SUDO_TICKET ]]; then builtin printf "%s\n" xtrace-with-live-sudo >>"$TEST_POISON_CALLS"; fi)' \
+    'BASH_FUNC_echo%%=() { if [[ -e $TEST_SUDO_TICKET ]]; then builtin printf "%s\n" exported-echo-with-live-sudo >>"$TEST_POISON_CALLS"; fi; builtin echo "$@"; }' \
+    'BASH_FUNC_printf%%=() { if [[ -e $TEST_SUDO_TICKET ]]; then builtin echo exported-printf-with-live-sudo >>"$TEST_POISON_CALLS"; fi; builtin printf "$@"; }' \
+    /usr/bin/bash -p "$setup_copy" </dev/null >/dev/null; then
     status=0
   else
     status=$?
@@ -336,7 +365,7 @@ invoke_setup() {
     fail "FIDO2 setup invalidates sudo credentials before returning" "$(cat "$calls")"
   [[ ! -e $sudo_ticket ]] || fail "FIDO2 setup leaves no reusable sudo credentials"
   [[ ! -s $poison_calls ]] ||
-    fail "FIDO2 setup executes a user-PATH callback" "$(cat "$poison_calls")"
+    fail "FIDO2 setup executes an inherited or user-PATH callback" "$(cat "$poison_calls")"
 
   return "$status"
 }
@@ -465,7 +494,7 @@ grep -Fxq $'sudo\tmv\t-Tf\t'"$stage_path"$'\t'"$authfile" "$calls" ||
 [[ $(stat -c %a "$authfile") == "644" ]] ||
   fail "the published authfile is mode 644" "got: $(stat -c %a "$authfile")"
 pass "FIDO2 setup pipes the credential into a unique root-created stage and publishes it atomically"
-pass "FIDO2 utilities run cold and setup revokes sudo before returning"
+pass "FIDO2 utilities run with sanitized Bash state and setup revokes sudo before returning"
 
 # A chmod failure happens after a complete credential has been written but
 # before publication. It must abort the setup and leave the EXIT trap armed.
