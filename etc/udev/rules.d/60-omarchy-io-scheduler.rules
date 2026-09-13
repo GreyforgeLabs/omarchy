@@ -1,0 +1,6 @@
+# Kyber targets read latency (2ms) and throttles writes to hold it, so the
+# desktop stays responsive under a large build, copy, or package upgrade.
+# The kernel default is none for NVMe and mq-deadline for everything else,
+# neither of which bounds latency once the device queue fills. Applies to real
+# disks only; zram is memory and has nothing to schedule.
+ACTION=="add|change", KERNEL=="nvme[0-9]*n[0-9]*|sd[a-z]*|mmcblk[0-9]*|vd[a-z]*", ATTR{queue/scheduler}="kyber"
