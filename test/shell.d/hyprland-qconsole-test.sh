@@ -22,6 +22,14 @@ hl = {
   on = function(event, callback) handlers[event] = callback end,
   get_active_monitor = function() return monitor end,
   get_workspace = function() return workspace end,
+  -- workspace.windows is the tiled count here and workspace.floats the floating
+  -- one, so the fixtures can say which kind of window is on the console.
+  get_workspace_windows = function()
+    local list = {}
+    for _ = 1, workspace and workspace.windows or 0 do table.insert(list, { floating = false }) end
+    for _ = 1, workspace and workspace.floats or 0 do table.insert(list, { floating = true }) end
+    return list
+  end,
   exec_scheduled_prop_refresh_immediately = function() end,
 }
 
@@ -226,11 +234,46 @@ handlers["monitor.layout_changed"]()
 top, right, bottom, left = gaps()
 assert(left == 420 and right == 420 and bottom == 540, "a scratchpad that does not exist yet is sized as a console")
 
--- window.close and window.move_to_workspace both run while the workspace still
--- counts the window that is leaving, so a refit from either reads one too many
--- and strands the console at full width. window.open and window.destroy are the
--- two that run after the count has already moved, and are the only ones hooked.
+-- Back to a console on screen for the move and float checks.
+workspace = { name = "special:scratchpad", visible = true, monitor = acer, windows = 1 }
+monitor = acer
+handlers["monitor.layout_changed"]()
+top, right, bottom, left = gaps()
+assert(left == 435 and right == 435, "a single tiled window is a console")
+
+-- A floating window on top of the console is not laid out by the gaps, so it
+-- must not stretch the panel out from under the agent.
+workspace.floats = 1
+handlers["window.open"]()
+top, right, bottom, left = gaps()
+assert(left == 435 and right == 435, "a floating window on the console keeps the panel")
+
+-- Tiling that float (Super+T) makes it a second app, and floating it again
+-- gives the panel back. Both arrive as window.update_rules.
+workspace.floats, workspace.windows = 0, 2
+handlers["window.update_rules"]()
+top, right, bottom, left = gaps()
+assert(left == 0 and right == 0, "tiling a float on the console restores the full width")
+
+workspace.floats, workspace.windows = 1, 1
+handlers["window.update_rules"]()
+top, right, bottom, left = gaps()
+assert(left == 435 and right == 435, "floating it again recenters the panel")
+
+-- Sending an app onto the scratchpad (Super+Alt+S) or off it (Super+Shift+1)
+-- does not open or destroy anything, so the move itself has to refit.
+workspace.floats, workspace.windows = 0, 2
+handlers["window.move_to_workspace"]()
+top, right, bottom, left = gaps()
+assert(left == 0 and right == 0, "moving a second app onto the console restores the full width")
+
+workspace.windows = 1
+handlers["window.move_to_workspace"]()
+top, right, bottom, left = gaps()
+assert(left == 435 and right == 435, "moving it back off recenters the panel")
+
+-- window.close still counts the window on its way out, and window.destroy
+-- follows it with the settled count, so only destroy is hooked.
 assert(handlers["window.close"] == nil, "window.close counts the window on its way out")
-assert(handlers["window.move_to_workspace"] == nil, "window.move_to_workspace does too")
 LUA
 pass "the console is a centered panel until a second app joins it"

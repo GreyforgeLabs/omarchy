@@ -63,10 +63,17 @@ local function cover(side, bottom)
 end
 
 -- One window reads as a console and gets the panel. A second app has turned the
--- scratchpad into a workspace, and a workspace wants the whole width.
+-- scratchpad into a workspace, and a workspace wants the whole width. Only tiled
+-- windows count: the gaps are what size the panel, and a floating window on top
+-- of the console is not laid out by them.
 local function alone()
-  local ws = hl.get_workspace(SCRATCHPAD)
-  return not ws or ws.windows <= 1
+  local tiled = 0
+  for _, window in ipairs(hl.get_workspace_windows(SCRATCHPAD)) do
+    if not window.floating then
+      tiled = tiled + 1
+    end
+  end
+  return tiled <= 1
 end
 
 -- Sizing the console with a window rule would freeze it at whatever the screen
@@ -158,11 +165,14 @@ hl.on("workspace.move_to_monitor", function(ws, mon)
   end
 end)
 
--- The panel is only centered while the console holds one window, so the count
--- has to be rechecked as apps come and go. These are the two events that run
--- after the workspace's count has already moved: window.close and
--- window.move_to_workspace still count the window on its way out, and refitting
--- from those would read one too many and leave the console full width.
+-- The panel is only centered while the console holds one tiled window, so the
+-- count has to be rechecked as apps come and go: opened and closed, moved on or
+-- off (Super+Alt+S, Super+Shift+1), and floated or tiled (Super+T, Super+O).
+-- window.close is left out, since it still counts the window on its way out and
+-- window.destroy follows it anyway. Measured on Hyprland 0.56.2, a move is
+-- trailed by several window.update_rules, as is a float toggle, and the last of
+-- those always reads the settled count; the earlier ones refit to what the rule
+-- already is, which cover() skips.
 --
 -- Only while it is on screen, though. A hidden console is refitted on its way in
 -- by workspace.special_active, and every window opened anywhere on the desktop
@@ -176,6 +186,8 @@ end
 
 hl.on("window.open", recount)
 hl.on("window.destroy", recount)
+hl.on("window.move_to_workspace", recount)
+hl.on("window.update_rules", recount)
 
 -- The direction names the edge the offset is measured from, not where the
 -- workspace goes: "slide top" drops it down into view, and "slide bottom"
