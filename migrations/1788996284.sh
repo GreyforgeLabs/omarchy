@@ -3,6 +3,18 @@ echo "Repair remote Neovim clipboard yanks and paste"
 nvim_provider="$HOME/.config/nvim/lua/config/remote_clipboard.lua"
 provider_source="/usr/share/omarchy-nvim/config/lua/config/remote_clipboard.lua"
 
+# Dotfile managers may own either the file or a parent directory through a
+# symlink. Preserve that layout rather than detaching or editing its target.
+provider_path="$nvim_provider"
+while [[ $provider_path != "$HOME" && $provider_path != / ]]; do
+  if [[ -L $provider_path ]]; then
+    echo "Preserving symlink-managed Neovim provider: $nvim_provider"
+    echo "Review remote clipboard settings in your dotfile configuration manually."
+    exit 0
+  fi
+  provider_path=$(dirname "$provider_path")
+done
+
 [[ -f $nvim_provider ]] || exit 0
 
 # Replace only known Omarchy versions, including the June file-backed provider
@@ -30,5 +42,10 @@ fi
 
 provider_backup=$(mktemp "$nvim_provider.bak.XXXXXX")
 cp -p "$nvim_provider" "$provider_backup"
-install -m 0644 "$provider_source" "$nvim_provider"
+provider_staged=$(mktemp "$nvim_provider.new.XXXXXX")
+trap 'rm -f -- "$provider_staged"' EXIT
+install -m 0644 "$provider_source" "$provider_staged"
+# A failed write leaves the recognized original live, so retries can repair it.
+# The temporary file is on the same filesystem for an atomic replacement.
+mv -fT -- "$provider_staged" "$nvim_provider"
 echo "Previous Neovim provider saved to $provider_backup"
